@@ -34,7 +34,8 @@ jobs:
             ${{ env.DOCKER_IMAGE }}
           # generate Docker tags based on the following events/attributes
           tags: |
-            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest
 
       - name: Setup GO version
