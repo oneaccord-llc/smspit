@@ -10,11 +10,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"html/template"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -78,7 +80,26 @@ func list(db *sql.DB, q string) ([]SMS, error) {
 	return out, rows.Err()
 }
 
-var page = template.Must(template.New("").Parse(`<!doctype html>
+var urlRE = regexp.MustCompile(`https?://[^\s<>"']+`)
+
+// linkify HTML-escapes s and turns http(s) URLs in it into links. Trailing
+// punctuation stays outside the link, so "see https://x.co/a." links x.co/a.
+// ponytail: only http(s):// URLs; bare "example.com/x" stays text. Add if SMS copy uses those.
+func linkify(s string) template.HTML {
+	var b strings.Builder
+	last := 0
+	for _, loc := range urlRE.FindAllStringIndex(s, -1) {
+		u := strings.TrimRight(s[loc[0]:loc[1]], ".,;:!?)]}")
+		b.WriteString(template.HTMLEscapeString(s[last:loc[0]]))
+		fmt.Fprintf(&b, `<a href="%s" target="_blank" rel="noopener noreferrer">%s</a>`,
+			template.HTMLEscapeString(u), template.HTMLEscapeString(u))
+		last = loc[0] + len(u)
+	}
+	b.WriteString(template.HTMLEscapeString(s[last:]))
+	return template.HTML(b.String())
+}
+
+var page = template.Must(template.New("").Funcs(template.FuncMap{"linkify": linkify}).Parse(`<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>smspit</title>
 <style>
@@ -88,14 +109,15 @@ input[type=search]{width:100%;box-sizing:border-box;padding:.5rem .75rem;font:in
 .sms{background:#fff;border-radius:12px;padding:.75rem 1rem;margin:.75rem 0;box-shadow:0 1px 2px #0002}
 .meta{font-size:.8rem;color:#71717a;display:flex;justify-content:space-between}
 .body{white-space:pre-wrap;margin-top:.4rem;word-break:break-word}
-@media (prefers-color-scheme:dark){body{background:#18181b;color:#f4f4f5}.sms{background:#27272a}}
+.body a{color:#2563eb}
+@media (prefers-color-scheme:dark){body{background:#18181b;color:#f4f4f5}.sms{background:#27272a}.body a{color:#60a5fa}}
 </style></head><body>
 <header><h1>smspit <small>({{len .Msgs}})</small></h1>
 <form method="post" action="/clear"><button>Clear all</button></form></header>
 <form><input type="search" name="q" value="{{.Q}}" placeholder="to:+1555 from:MG reminder" aria-label="Search messages"></form>
 {{range .Msgs}}<div class="sms">
 <div class="meta"><span>{{with .Campaign}}[{{.}}] {{end}}{{.From}} → <b>{{.To}}</b></span><span>{{.At.Format "15:04:05 Jan 2"}}</span></div>
-<div class="body">{{.Body}}</div></div>
+<div class="body">{{linkify .Body}}</div></div>
 {{else}}{{if .Q}}<p>No messages match.</p>{{else}}<p>No messages yet. Publish JSON <code>{"campaign","from","to","body"}</code> to <code>smspit.sms</code>.</p>{{end}}{{end}}
 <script>setInterval(() => document.activeElement.name !== "q" && location.reload(), 3000)</script>
 </body></html>`))
